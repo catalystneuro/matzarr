@@ -118,6 +118,26 @@ classdef TestMatzarr < matlab.unittest.TestCase
             end
         end
 
+        function requestCounts(tc)
+            % The cloud-efficiency contract: opening costs a fixed number of
+            % metadata reads; a slice costs exactly its intersecting chunks.
+            [matPath, vars] = TestMatzarr.makeMat(tc.work);
+            indexDir = matzarr.index(matPath);
+            store = CountingManifestStore(indexDir);
+            f = matzarr.File(store);
+            store.resetCounts();
+
+            v = f.big;                       % consolidated: no reads at all
+            tc.verifyEqual(store.nGets + store.nPartials, 0, ...
+                'variable lookup is served from consolidated metadata');
+
+            cs = v.chunkShape;
+            slice = v(1:10, 1:10); %#ok<NASGU>
+            nTouched = prod(ceil(10 ./ min(cs, 10)));
+            tc.verifyEqual(store.nGets, nTouched, ...
+                sprintf('a 10x10 slice reads exactly %d chunk(s)', nTouched));
+        end
+
         function readOnly(tc)
             [matPath, ~] = TestMatzarr.makeMat(tc.work);
             f = matzarr.open(matzarr.index(matPath));

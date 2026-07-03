@@ -29,3 +29,20 @@ jobs:
             cd(getenv('GITHUB_WORKSPACE'));
             setenv('ZARR_MATLAB_PATH', fullfile(pwd, 'zarr-matlab-dep'));
             run tools/run_tests.m
+
+      - name: Set up Python for the zarr-python cross-check
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "zarr>=3" numpy fsspec
+
+      - name: Write shim fixture (MATLAB)
+        uses: matlab-actions/run-command@v2
+        with:
+          command: >-
+            cd(getenv('GITHUB_WORKSPACE'));
+            addpath(pwd, fullfile(pwd, 'tools'), fullfile(pwd, 'zarr-matlab-dep'));
+            make_shim_fixture(fullfile(pwd, 'shim_fixture'))
+
+      - name: Verify with zarr-python via kerchunk refs
+        run: python tools/shim_kerchunk.py shim_fixture/fixture.mat.zarr
