@@ -138,6 +138,19 @@ classdef TestMatzarr < matlab.unittest.TestCase
                 sprintf('a 10x10 slice reads exactly %d chunk(s)', nTouched));
         end
 
+        function nocompressionContiguous(tc)
+            % save -nocompression produces CONTIGUOUS datasets, exercising
+            % the H5D.get_offset path and its offset-semantics validation.
+            data.raw = reshape((1:5e4) * 2, [200 250]);
+            data.rawVec = int32((1:5000)');
+            matPath = char(fullfile(tc.work, 'nc.mat'));
+            save(matPath, '-struct', 'data', '-v7.3', '-nocompression');
+            f = matzarr.open(matzarr.index(matPath));
+            tc.verifyEqual(f.raw(50:60, 100:110), data.raw(50:60, 100:110));
+            got = f.rawVec;
+            tc.verifyEqual(got.read(), data.rawVec);
+        end
+
         function readOnly(tc)
             [matPath, ~] = TestMatzarr.makeMat(tc.work);
             f = matzarr.open(matzarr.index(matPath));

@@ -19,6 +19,17 @@ fid = H5F.open(char(matPath), 'H5F_ACC_RDONLY', 'H5P_DEFAULT');
 closer = onCleanup(@() H5F.close(fid));
 fcpl = H5F.get_create_plist(fid);
 userblock = H5P.get_userblock(fcpl);
+% HDF5 changed chunk-address semantics: in 1.10 H5Dget_chunk_info returns
+% addresses relative to the superblock (userblock must be added); in 1.14+
+% they are absolute file offsets. Pick by version, then VERIFY empirically
+% (self-checks below) and fall back to the alternative if decoding fails.
+[h5maj, h5min] = H5.get_libversion();
+if h5maj > 1 || h5min >= 14
+    chunkAddrOffset = 0;
+else
+    chunkAddrOffset = userblock;
+end
+contigAddrOffset = -1;   % resolved on first contiguous dataset
 
 if isfolder(indexDir), rmdir(indexDir, 's'); end
 store = zarr.stores.LocalStore(indexDir);
@@ -143,30 +154,32 @@ zarr.consolidate_metadata(store);
                 % so a MATLAB-version change in .mat encoding fails loudly at
                 % index time, with evidence, rather than corrupting reads.
                 selfChecked = true;
-                raw = readRange(matPath, double(addrs(1)) + userblock, double(sizes(1)));
-                try
-                    pipeline.decode(raw);
-                catch err
-                    rawNoUb = readRange(matPath, double(addrs(1)), min(8, double(sizes(1))));
-                    [vMaj, vMin, vRel] = H5.get_libversion();
-                    error("matzarr:SelfCheckFailed", ...
-                        "Chunk decode self-check failed for '%s': %s\n" + ...
-                        "  filters=[%s] userblock=%d addr=%d size=%d hdf5=%d.%d.%d\n" + ...
-                        "  first8 @addr+userblock: %s\n  first8 @addr (no userblock): %s", ...
-                        nodePath, err.message, num2str(filtersSeen), userblock, ...
-                        addrs(1), sizes(1), vMaj, vMin, vRel, ...
-                        strjoin(string(dec2hex(raw(1:min(8, end)), 2))', " "), ...
-                        strjoin(string(dec2hex(rawNoUb, 2))', " "));
+                raw = readRange(matPath, double(addrs(1)) + chunkAddrOffset, double(sizes(1)));
+                if ~tryDecode(pipeline, raw)
+                    alt = userblock - chunkAddrOffset;   % the other candidate
+                    raw2 = readRange(matPath, double(addrs(1)) + alt, double(sizes(1)));
+                    if tryDecode(pipeline, raw2)
+                        chunkAddrOffset = alt;
+                    else
+                        error("matzarr:SelfCheckFailed", ...
+                            "Chunk decode self-check failed for '%s' at both address offsets " + ...
+                            "(filters=[%s] userblock=%d addr=%d size=%d hdf5=%d.%d, " + ...
+                            "first8@+%d: %s, first8@+%d: %s).", ...
+                            nodePath, num2str(filtersSeen), userblock, addrs(1), sizes(1), ...
+                            h5maj, h5min, chunkAddrOffset, ...
+                            strjoin(string(dec2hex(raw(1:min(8, end)), 2))', " "), alt, ...
+                            strjoin(string(dec2hex(raw2(1:min(8, end)), 2))', " "));
+                    end
                 end
             end
             for k = 1:numel(addrs)
                 coords = flip(double(offs(k, :)) ./ h5chunk);  % logical grid
                 key = nodePath + "/" + meta.chunkKey(coords);
                 if masks(k) == 0
-                    addEntry(key, double(addrs(k)) + userblock, double(sizes(k)));
+                    addEntry(key, double(addrs(k)) + chunkAddrOffset, double(sizes(k)));
                 else
                     % this chunk skipped some filters; normalize by re-encoding
-                    raw = readRange(matPath, double(addrs(k)) + userblock, double(sizes(k)));
+                    raw = readRange(matPath, double(addrs(k)) + chunkAddrOffset, double(sizes(k)));
                     chunkArr = decodeMasked(raw, masks(k), deflateLevel, meta, info, h5chunk);
                     addInline(key, pipeline.encode(chunkArr));
                 end
@@ -179,8 +192,27 @@ zarr.consolidate_metadata(store);
             end
             key = nodePath + "/" + meta.chunkKey(zeros(1, R));
             if offset >= 0
-                addEntry(key, double(offset) + userblock, ...
-                    double(H5D.get_storage_size(dset)));
+                storage = double(H5D.get_storage_size(dset));
+                if contigAddrOffset < 0
+                    % Resolve contiguous-offset semantics once per file by
+                    % validating decoded bytes against h5read.
+                    expected = castForPipeline(h5read(char(matPath), char(h5path)), ...
+                        info, meta.shape);
+                    for cand = unique([chunkAddrOffset, 0, userblock])
+                        rawC = readRange(matPath, double(offset) + cand, storage);
+                        [ok, A] = tryDecode(pipeline, rawC);
+                        if ok && isequaln(A, expected)
+                            contigAddrOffset = cand;
+                            break
+                        end
+                    end
+                    if contigAddrOffset < 0
+                        error("matzarr:SelfCheckFailed", ...
+                            "Contiguous dataset '%s' did not validate at any address offset.", ...
+                            nodePath);
+                    end
+                end
+                addEntry(key, double(offset) + contigAddrOffset, storage);
             else
                 % compact layout (tiny values live in object headers): inline
                 vals = h5read(char(matPath), char(h5path));
@@ -301,6 +333,16 @@ end
 % (shuffle skipped-chunk handling would go here; deflate-only in practice)
 v = typecast(uint8(bytes(:)'), char(info.matlabClass));
 chunkArr = reshape(v, zarr.internal.mshape(flip(h5chunk)));
+end
+
+function [ok, A] = tryDecode(pipeline, bytes)
+A = [];
+try
+    A = pipeline.decode(bytes);
+    ok = true;
+catch
+    ok = false;
+end
 end
 
 function raw = readRange(path, offset, len)
