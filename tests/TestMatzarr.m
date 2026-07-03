@@ -151,6 +151,57 @@ classdef TestMatzarr < matlab.unittest.TestCase
             tc.verifyEqual(got.read(), data.rawVec);
         end
 
+        function caseCollidingRefs(tc)
+            % .mat /#refs# names are case-sensitive (a..z, A..Z, ...): a cell
+            % with >26 entries forces names like 'A' that collide with 'a' on
+            % case-insensitive filesystems (macOS APFS). Regression for the
+            % silent cross-read that caused.
+            c = cell(1, 40);
+            for i = 1:40, c{i} = i * (1:i); end   % distinct sizes and values
+            data.c = c;
+            data.mixed = struct('n', num2cell(1:30), 's', repmat({'x'}, 1, 30));
+            matPath = char(fullfile(tc.work, 'refs.mat'));
+            save(matPath, '-struct', 'data', '-v7.3');
+            f = matzarr.open(matzarr.index(matPath));
+            tc.verifyTrue(isequaln(f.getVariable('c'), c));
+            tc.verifyTrue(isequaln(f.getVariable('mixed'), data.mixed));
+        end
+
+        function structOfCellsAndStructArray(tc)
+            % crcns-style: struct with a cell of variable-length arrays plus
+            % a struct array, all sharing one /#refs# group.
+            data.s.spikes = arrayfun(@(u) sort((1:u*13) * 0.5), 1:15, ...
+                'UniformOutput', false);
+            data.s.trials = struct('onset', num2cell((1:20) * 2.0), ...
+                'label', repmat({'go', 'nogo'}, 1, 10));
+            data.s.meta = struct('fs', 30000, 'region', 'CA1');
+            matPath = char(fullfile(tc.work, 'ephys.mat'));
+            save(matPath, '-struct', 'data', '-v7.3');
+            f = matzarr.open(matzarr.index(matPath));
+            tc.verifyTrue(isequaln(f.getVariable('s'), data.s));
+        end
+
+        function indexAwayFromFile(tc)
+            % index dir not adjacent to the .mat: relative path must still
+            % resolve (regression for hardcoded ../name.mat).
+            [matPath, vars] = TestMatzarr.makeMat(tc.work);
+            idx = fullfile(tc.work, "sub", "dir", "out.zarr");
+            matzarr.index(matPath, idx);
+            f = matzarr.open(idx);
+            tc.verifyEqual(f.big(1:5, 1:5), vars.big(1:5, 1:5));
+        end
+
+        function twoFileIndex(tc)
+            % the on-disk index is exactly two files (consolidated root +
+            % manifest), regardless of node count.
+            data.a.b.c = magic(4); data.a.b.d = (1:100)'; data.x = pi;
+            matPath = char(fullfile(tc.work, 'deep.mat'));
+            save(matPath, '-struct', 'data', '-v7.3');
+            idx = matzarr.index(matPath);
+            files = dir(fullfile(idx, '**', '*')); files = files(~[files.isdir]);
+            tc.verifyEqual(sort(string({files.name})), ["manifest.json", "zarr.json"]);
+        end
+
         function readOnly(tc)
             [matPath, ~] = TestMatzarr.makeMat(tc.work);
             f = matzarr.open(matzarr.index(matPath));

@@ -31,8 +31,12 @@ else
 end
 contigAddrOffset = -1;   % resolved on first contiguous dataset
 
-if isfolder(indexDir), rmdir(indexDir, 's'); end
-store = zarr.stores.LocalStore(indexDir);
+% Build all metadata in a CASE-SENSITIVE in-memory store: .mat /#refs#
+% uses case-sensitive single-char names (a, A, b, B, ...) that would
+% clobber each other as files on a case-insensitive filesystem (macOS
+% APFS, Windows NTFS default). We consolidate in memory and persist only
+% the consolidated root + manifest to disk — two files, no per-node files.
+store = zarr.stores.MemoryStore();
 zarr.create_group(store, Attributes=struct( ...
     'matzarr_format', 1, 'source', struct('file', getRelName(matPath, indexDir))));
 
@@ -41,12 +45,16 @@ selfChecked = false;
 top = h5info(char(matPath));
 walkGroup(top, "");
 
-% manifest: chunk data lives in the ORIGINAL .mat file
 manifest = "{""manifest_format"":1,""default_path"":" + ...
     string(jsonencode(char(getRelName(matPath, indexDir)))) + ...
     ",""chunks"":{" + strjoin(manifestEntries, ",") + "}}";
-store.set("manifest.json", unicode2native(char(manifest), 'UTF-8'));
 zarr.consolidate_metadata(store);
+
+if isfolder(indexDir), rmdir(indexDir, 's'); end
+out = zarr.stores.LocalStore(indexDir);
+[rootMeta, ~] = store.get("zarr.json");
+out.set("zarr.json", rootMeta);                              % consolidated root
+out.set("manifest.json", unicode2native(char(manifest), 'UTF-8'));
 
     % ------------------------------------------------------------------
     function walkGroup(g, prefix)
@@ -123,12 +131,16 @@ zarr.consolidate_metadata(store);
             codecs = [{zarr.codecs.TransposeCodec(R - 1:-1:0)}, codecs];
         end
 
-        try
+        % Ask HDF5 for the layout directly (0=compact 1=contiguous 2=chunked)
+        % rather than inferring it from get_chunk/get_offset exceptions, which
+        % misroutes compact scalars (common in .mat /#refs# entries).
+        layout = H5P.get_layout(plist);
+        if layout == 2
             [~, h5chunk] = H5P.get_chunk(plist);
             h5chunk = reshape(double(h5chunk), 1, []);
             chunked = true;
-        catch
-            h5chunk = h5dims;   % contiguous or compact: one whole-array chunk
+        else
+            h5chunk = h5dims;   % contiguous / compact: one whole-array chunk
             chunked = false;
         end
 
@@ -184,6 +196,11 @@ zarr.consolidate_metadata(store);
                     addInline(key, pipeline.encode(chunkArr));
                 end
             end
+        elseif layout == 0
+            % compact: data lives in the object header, not at a file offset
+            vals = h5read(char(matPath), char(h5path));
+            A = castForPipeline(vals, info, meta.shape);
+            addInline(nodePath + "/" + meta.chunkKey(zeros(1, R)), pipeline.encode(A));
         else
             offset = -1;
             try
@@ -191,7 +208,7 @@ zarr.consolidate_metadata(store);
             catch
             end
             key = nodePath + "/" + meta.chunkKey(zeros(1, R));
-            if offset >= 0
+            if offset >= 0 && double(H5D.get_storage_size(dset)) > 0
                 storage = double(H5D.get_storage_size(dset));
                 if contigAddrOffset < 0
                     % Resolve contiguous-offset semantics once per file by
@@ -214,7 +231,7 @@ zarr.consolidate_metadata(store);
                 end
                 addEntry(key, double(offset) + contigAddrOffset, storage);
             else
-                % compact layout (tiny values live in object headers): inline
+                % zero-storage (e.g. empty) contiguous dataset: inline
                 vals = h5read(char(matPath), char(h5path));
                 A = castForPipeline(vals, info, meta.shape);
                 addInline(key, pipeline.encode(A));
@@ -360,7 +377,33 @@ else
 end
 end
 
-function rel = getRelName(matPath, indexDir) %#ok<INUSD>
-[~, n, e] = fileparts(matPath);
-rel = "../" + n + e;   % index dir sits next to the .mat file
+function rel = getRelName(matPath, indexDir)
+% Relative path FROM the index dir TO the .mat file, so a moved
+% (index, file) pair still resolves. Falls back to an absolute path when
+% the two live on different drives (Windows) or share no common root.
+matAbs = absPath(matPath);
+idxAbs = absPath(indexDir);
+mp = split(matAbs, "/");
+ip = split(idxAbs, "/");
+mp = mp(strlength(mp) > 0);
+ip = ip(strlength(ip) > 0);
+k = 0;
+while k < min(numel(mp), numel(ip)) - 1 && mp(k + 1) == ip(k + 1)
+    k = k + 1;
+end
+if k == 0 && ~startsWith(matAbs, "/")
+    rel = matAbs;   % no shared root (e.g. different Windows drives)
+    return
+end
+ups = repmat("..", 1, numel(ip) - k);   % ip includes the index dir itself
+downs = mp(k + 1:end);
+rel = strjoin([ups(:); downs(:)], "/");
+end
+
+function p = absPath(p)
+p = string(p);
+if ~(startsWith(p, "/") || ~isempty(regexp(p, '^[A-Za-z]:', 'once')))
+    p = string(fullfile(pwd, char(p)));
+end
+p = strrep(p, "\", "/");
 end
