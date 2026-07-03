@@ -156,8 +156,8 @@ r = f.deref(ref);                            % ZarrReference -> node
 | # | Deliverable | Acceptance criteria |
 |---|---|---|
 | **M0** | **De-risking spike** | ✅ **GO** (spike/m0_spike.m, 2026-07-03). Findings baked into the design below. |
-| **M1** | zarr-matlab v0.3 | `ManifestStore` + `numcodecs.zlib`/`numcodecs.shuffle` codecs, tested (incl. zarr-python reading a store that uses them); ships independently |
-| **M2** | matzarr alpha | index+read: numeric/char/logical/cell/struct/empty; full self-round-trip matrix green; HTTP request-count assertions; VirtualiZarr shim |
+| **M1** | zarr-matlab v0.3 | ✅ done: `ManifestStore` (byte-range + inline, sharded partial reads compose), `numcodecs.zlib`/`numcodecs.shuffle` (interop-verified vs zarr-python both directions) |
+| **M2** | matzarr alpha | ✅ done (2026-07-03): 14-type round-trip matrix green (incl. nested cells, struct arrays); lazy slicing; reads over HTTP. Deferred to M2.5: request-count assertions, VirtualiZarr shim |
 | **M3** | hdmf-zarr-matlab read (NWB) | opens PR-#325-written NWB-Zarr; resolves all links/refs; walks a real ecephys file |
 | **M4** | hdmf-zarr-matlab write | MATLAB-written NWB-Zarr passes pynwb validation round trip |
 | **M5** | Polish & release | sparse (P2 call), error surface for exotic types, docs sites, `.mltbx` releases, File Exchange |
