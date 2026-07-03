@@ -23,10 +23,21 @@ at indexing time into portable JSON references using
 
 ## Status
 
-**Pre-alpha.** The de-risking spike (`spike/`) is complete and green — see
-[PLAN.md](PLAN.md) for the design, spike findings (userblock offsets,
-zero-permute reads, reference resolution), and milestones. Foundation work
-(manifest store, zlib/shuffle codecs) lands in zarr-matlab first.
+**Alpha — the core works end to end.** Indexing and reading are implemented
+and tested: a 14-type round-trip matrix (numerics, char, logical, nested
+cells, structs, struct arrays, empties) with MATLAB's own `save`/`load` as
+the oracle; lazy slicing that reads exactly the intersecting chunks (request
+counts are asserted in CI); reading over HTTP; compressed (deflate) and
+uncompressed (`-nocompression`) files; HDF5 1.10 and 1.14 address semantics
+(self-verified per file at index time).
+
+The index is also readable from **Python**: `tools/shim_kerchunk.py`
+translates the manifest to kerchunk references, so zarr-python/xarray can
+read your `.mat` files too — verified in CI.
+
+Not yet supported (clear errors, never silent corruption): complex numbers
+(HDF5 compound), sparse matrices, `string` arrays, tables, objects, and
+function handles. See [PLAN.md](PLAN.md) for design and milestones.
 
 ## License
 
