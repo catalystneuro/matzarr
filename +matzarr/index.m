@@ -26,6 +26,7 @@ zarr.create_group(store, Attributes=struct( ...
     'matzarr_format', 1, 'source', struct('file', getRelName(matPath, indexDir))));
 
 manifestEntries = strings(0, 1);
+selfChecked = false;
 top = h5info(char(matPath));
 walkGroup(top, "");
 
@@ -88,8 +89,10 @@ zarr.consolidate_metadata(store);
         % filters -> codec chain (deflate=1, shuffle=2)
         codecs = {};
         deflateLevel = [];
+        filtersSeen = [];
         for f = 0:H5P.get_nfilters(plist) - 1
             [fdef, ~, cd] = H5P.get_filter(plist, f);
+            filtersSeen(end + 1) = fdef; %#ok<AGROW>
             switch fdef
                 case 1
                     deflateLevel = double(cd(1));
@@ -135,6 +138,21 @@ zarr.consolidate_metadata(store);
             space = H5D.get_space(dset);
             [addrs, sizes, masks, offs] = h5chunks_mex(int64(dset.identifier), ...
                 R, int64(space.identifier));
+            if ~selfChecked && ~isempty(addrs) && masks(1) == 0
+                % Validate the codec-chain assumption on the first real chunk
+                % so a MATLAB-version change in .mat encoding fails loudly at
+                % index time, with evidence, rather than corrupting reads.
+                selfChecked = true;
+                raw = readRange(matPath, double(addrs(1)) + userblock, double(sizes(1)));
+                try
+                    pipeline.decode(raw);
+                catch err
+                    error("matzarr:SelfCheckFailed", ...
+                        "Chunk decode self-check failed for '%s' (filters=[%s], first8=%s): %s", ...
+                        nodePath, num2str(filtersSeen), ...
+                        strjoin(string(dec2hex(raw(1:min(8, end)), 2))', " "), err.message);
+                end
+            end
             for k = 1:numel(addrs)
                 coords = flip(double(offs(k, :)) ./ h5chunk);  % logical grid
                 key = nodePath + "/" + meta.chunkKey(coords);
