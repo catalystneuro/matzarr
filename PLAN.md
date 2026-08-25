@@ -102,6 +102,7 @@ materializes these JSON forms inline in the manifest.
 | MATLAB_class | Storage | Reader action |
 |---|---|---|
 | double…uint64, single | array | direct (dtype from HDF5 type) |
+| complex double/single | compound `{real, imag}` | direct: the compound is tightly packed and little-endian, i.e. exactly Zarr `complex128`/`complex64`, so the chunk is a byte-range view |
 | char | uint16 array | `char()` decode |
 | logical | uint8 + attr | `logical()` |
 | cell | reference array into `/#refs#` | resolve refs (hdmf layer), recurse |
@@ -157,7 +158,7 @@ r = f.deref(ref);                            % ZarrReference -> node
 |---|---|---|
 | **M0** | **De-risking spike** | ✅ **GO** (spike/m0_spike.m, 2026-07-03). Findings baked into the design below. |
 | **M1** | zarr-matlab v0.3 | ✅ done: `ManifestStore` (byte-range + inline, sharded partial reads compose), `numcodecs.zlib`/`numcodecs.shuffle` (interop-verified vs zarr-python both directions) |
-| **M2** | matzarr alpha | ✅ done (2026-07-03): 14-type round-trip matrix green (incl. nested cells, struct arrays); lazy slicing; reads over HTTP. Deferred to M2.5: request-count assertions, VirtualiZarr shim |
+| **M2** | matzarr alpha | ✅ done (2026-07-03): 19-type round-trip matrix green (incl. complex, nested cells, struct arrays); lazy slicing; reads over HTTP. Deferred to M2.5: request-count assertions, VirtualiZarr shim |
 | **M3** | hdmf-zarr-matlab read (NWB) | opens PR-#325-written NWB-Zarr; resolves all links/refs; walks a real ecephys file |
 | **M4** | hdmf-zarr-matlab write | MATLAB-written NWB-Zarr passes pynwb validation round trip |
 | **M5** | Polish & release | sparse (P2 call), error surface for exotic types, docs sites, `.mltbx` releases, File Exchange |

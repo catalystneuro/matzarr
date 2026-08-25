@@ -36,10 +36,39 @@ classdef TestMatzarr < matlab.unittest.TestCase
             vars.c = {int16([1 2 3]), 'text', {'nested', 7}};
             vars.s = struct('x', (1:10)', 'name', 'abc', 'flag', true);
             vars.sArr = struct('a', {1, 2, 3}, 'b', {'x', 'yy', 'zzz'});
+            vars.z64 = complex(magic(4), -magic(4));
+            vars.z32 = single(complex(peaks(20), fliplr(peaks(20))));
+            vars.zscalar = 3 - 4i;
+            vars.zvec = (1:50)' + 1i * (51:100)';
+            vars.zcell = {1 + 2i, complex(single([1 2 3]), [4 5 6])};
             vars.emptyD = [];
             vars.emptyC = 'x'; vars.emptyC(1) = []; %#ok<NASGU>
             matPath = char(fullfile(work, 'data.mat'));
             save(matPath, '-struct', 'vars', '-v7.3');
+        end
+
+        function writeCompound(filePath, dsName, members)
+            % An HDF5 file holding one compound dataset. members is
+            % {name1, h5type1, name2, h5type2, ...}, packed in order. Only
+            % the datatype matters here: the indexer rejects the dataset
+            % before it ever looks at storage, so no data is written.
+            sizes = zeros(1, numel(members) / 2);
+            for i = 1:numel(sizes)
+                sizes(i) = H5T.get_size(members{2 * i});
+            end
+            tid = H5T.create('H5T_COMPOUND', sum(sizes));
+            off = 0;
+            for i = 1:numel(sizes)
+                H5T.insert(tid, members{2 * i - 1}, off, members{2 * i});
+                off = off + sizes(i);
+            end
+            fid = H5F.create(filePath, 'H5F_ACC_TRUNC', 'H5P_DEFAULT', 'H5P_DEFAULT');
+            sid = H5S.create_simple(1, 4, 4);
+            did = H5D.create(fid, dsName, tid, sid, 'H5P_DEFAULT');
+            H5D.close(did);
+            H5S.close(sid);
+            H5T.close(tid);
+            H5F.close(fid);
         end
 
         function verifyVars(tc, f, vars)
@@ -200,6 +229,59 @@ classdef TestMatzarr < matlab.unittest.TestCase
             idx = matzarr.index(matPath);
             files = dir(fullfile(idx, '**', '*')); files = files(~[files.isdir]);
             tc.verifyEqual(sort(string({files.name})), ["manifest.json", "zarr.json"]);
+        end
+
+        function complexRoundTrip(tc)
+            % MATLAB writes complex arrays as an HDF5 compound {real, imag},
+            % which is byte-for-byte Zarr's complex64/complex128 — so complex
+            % chunks are byte-range views, never re-encoded. Cover both
+            % layouts: chunked + deflate, and contiguous (-nocompression).
+            data.zbig = complex(reshape((1:1.2e5) * 0.5, [300 400]), ...
+                                reshape((1:1.2e5) * -0.25, [300 400]));
+            data.zs.field = (1:20) + 1i * (21:40);
+            data.zsArr = struct('v', {1 + 1i, 2 - 2i, complex(single(3), 4)});
+            data.zmix = complex([1 NaN Inf -Inf], [NaN 0 -Inf Inf]);
+            data.z32 = single(complex(peaks(16), -peaks(16)));
+            matPath = char(fullfile(tc.work, 'z.mat'));
+            save(matPath, '-struct', 'data', '-v7.3');
+            ncPath = char(fullfile(tc.work, 'znc.mat'));
+            save(ncPath, '-struct', 'data', '-v7.3', '-nocompression');
+
+            for p = string({matPath, ncPath})
+                f = matzarr.open(matzarr.index(p));
+                v = f.zbig;
+                tc.verifyClass(v, 'zarr.Array');          % lazy, like any numeric
+                tc.verifyEqual(v.dtype, "complex128");
+                tc.verifyEqual(v(50:60, 100:110), data.zbig(50:60, 100:110), ...
+                    sprintf('zbig slice (%s)', p));
+                tc.verifyTrue(isequaln(v.read(), data.zbig));
+                tc.verifyTrue(isequaln(f.getVariable('zs'), data.zs));
+                tc.verifyTrue(isequaln(f.getVariable('zsArr'), data.zsArr));
+                zmix = f.getVariable('zmix');
+                tc.verifyClass(zmix, 'zarr.Array');       % complex stays lazy too
+                tc.verifyTrue(isequaln(zmix.read(), data.zmix), ...
+                    'NaN/Inf survive in both parts');
+                tc.verifyEqual(f.z32.dtype, "complex64");
+            end
+        end
+
+        function nonComplexCompoundErrorsClearly(tc)
+            % Only MATLAB's {real, imag} form of compound is supported. Any
+            % other record type must be named and refused, not misread as
+            % complex. Built with the low-level API: MATLAB itself has no
+            % way to save an arbitrary compound.
+            cases = {
+                {'rec', {'x', 'H5T_IEEE_F64LE', 'n', 'H5T_STD_I32LE'}}
+                {'intri', {'real', 'H5T_STD_I32LE', 'imag', 'H5T_STD_I32LE'}}
+            };
+            for k = 1:numel(cases)
+                name = cases{k}{1};
+                members = cases{k}{2};
+                h5Path = char(fullfile(tc.work, [name '.mat']));
+                TestMatzarr.writeCompound(h5Path, name, members);
+                tc.verifyError(@() matzarr.index(h5Path, ...
+                    fullfile(tc.work, string(name) + ".zarr")), "matzarr:UnsupportedType");
+            end
         end
 
         function readOnly(tc)

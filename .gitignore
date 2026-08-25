@@ -2,3 +2,4 @@
 .DS_Store
 scratch/
 .venv/
+__pycache__/
