@@ -24,8 +24,8 @@ at indexing time into portable JSON references using
 ## Status
 
 **Alpha — the core works end to end.** Indexing and reading are implemented
-and tested: a 19-type round-trip matrix (numerics, complex, char, logical,
-nested cells, structs, struct arrays, empties) with MATLAB's own
+and tested: a 21-type round-trip matrix (numerics, complex, sparse, char,
+logical, nested cells, structs, struct arrays, empties) with MATLAB's own
 `save`/`load` as the oracle; lazy slicing that reads exactly the
 intersecting chunks (request counts are asserted in CI); reading over HTTP;
 compressed (deflate) and uncompressed (`-nocompression`) files; HDF5 1.10
@@ -35,9 +35,9 @@ The index is also readable from **Python**: `tools/shim_kerchunk.py`
 translates the manifest to kerchunk references, so zarr-python/xarray can
 read your `.mat` files too — verified in CI.
 
-Not yet supported (clear errors, never silent corruption): sparse matrices,
-`string` arrays, tables, objects, and function handles. See
-[PLAN.md](PLAN.md) for design and milestones.
+Not yet supported (clear errors, never silent corruption): `string` arrays,
+tables, objects, and function handles. See [PLAN.md](PLAN.md) for design and
+milestones.
 
 ## License
 

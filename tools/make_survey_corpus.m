@@ -17,7 +17,7 @@ save(fullfile(outDir, 'crcns_ephys.mat'), '-struct', 'ephys', '-v7.3');
 img = single(reshape(1:2e6, [1000 2000]) / 1e6); %#ok<NASGU>
 save(fullfile(outDir, 'imaging_big.mat'), 'img', '-v7.3');
 
-% 3. complex + sparse (signal processing; hits clean-error paths)
+% 3. complex + sparse (signal processing)
 spectrum = fft(randn(1, 4096)); %#ok<NASGU>
 adjacency = sparse(randi(100, 1, 200), randi(100, 1, 200), 1, 100, 100); %#ok<NASGU>
 save(fullfile(outDir, 'signals.mat'), 'spectrum', 'adjacency', '-v7.3');

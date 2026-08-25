@@ -7,7 +7,7 @@ function report = survey(folder, opts)
 %   Classifies each file as:
 %     ok        - indexed and every variable round-trips
 %     mismatch  - indexed but a variable read back wrong  (SILENT BUG - worst)
-%     unsupported - a named matzarr error (expected: v7 file, complex, ...)
+%     unsupported - a named matzarr error (expected: v7 file, table, ...)
 %     error     - an unexpected failure
 %
 %   Options:
