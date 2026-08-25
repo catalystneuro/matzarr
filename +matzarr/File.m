@@ -56,6 +56,10 @@ classdef File < handle & matlab.mixin.indexing.RedefinesDot
         function val = materialize(obj, node)
             if isa(node, 'zarr.Group')
                 a = node.attrs;
+                if isfield(a, 'MATLAB_sparse')
+                    val = obj.materializeSparse(node, a);
+                    return
+                end
                 gcls = "struct";
                 if isfield(a, 'MATLAB_class')
                     gcls = string(char(a.MATLAB_class));
@@ -116,6 +120,40 @@ classdef File < handle & matlab.mixin.indexing.RedefinesDot
                 end
                 c{i} = v;
             end
+        end
+
+        function s = materializeSparse(obj, g, attrs) %#ok<INUSD>
+            % v7.3 stores a sparse matrix in compressed-column form: jc
+            % holds one running nonzero count per column plus a terminator,
+            % ir the 0-based row indices, data the values. The row count is
+            % not recoverable from those, so MATLAB records it in the
+            % MATLAB_sparse attribute; the column count is numel(jc) - 1.
+            % A matrix with no nonzeros omits data and ir entirely.
+            m = double(attrs.MATLAB_sparse);
+            jc = double(reshape(g.item("jc").read(), 1, []));
+            n = numel(jc) - 1;
+            cls = "double";
+            if isfield(attrs, 'MATLAB_class')
+                cls = string(char(attrs.MATLAB_class));
+            end
+            arrayNames = g.children();
+            if ismember("data", arrayNames)
+                vals = reshape(g.item("data").read(), [], 1);
+                rows = double(reshape(g.item("ir").read(), [], 1)) + 1;
+                cols = repelem((1:n)', reshape(diff(jc), [], 1));
+            else
+                vals = zeros(0, 1);
+                rows = zeros(0, 1);
+                cols = zeros(0, 1);
+            end
+            if cls == "logical"
+                vals = logical(vals);
+            elseif cls ~= "double"
+                error("matzarr:UnsupportedClass", ...
+                    "Sparse matrices of class '%s' are not supported ('%s').", ...
+                    cls, g.path);
+            end
+            s = sparse(rows, cols, vals, m, n);
         end
 
         function s = materializeStruct(obj, g)

@@ -41,6 +41,8 @@ classdef TestMatzarr < matlab.unittest.TestCase
             vars.zscalar = 3 - 4i;
             vars.zvec = (1:50)' + 1i * (51:100)';
             vars.zcell = {1 + 2i, complex(single([1 2 3]), [4 5 6])};
+            vars.spD = sparse([1 3 5 5], [2 2 1 4], [10 20 30 40], 6, 5);
+            vars.spL = sparse(logical([1 0 1; 0 1 0]));
             vars.emptyD = [];
             vars.emptyC = 'x'; vars.emptyC(1) = []; %#ok<NASGU>
             matPath = char(fullfile(work, 'data.mat'));
@@ -262,6 +264,50 @@ classdef TestMatzarr < matlab.unittest.TestCase
                 tc.verifyTrue(isequaln(zmix.read(), data.zmix), ...
                     'NaN/Inf survive in both parts');
                 tc.verifyEqual(f.z32.dtype, "complex64");
+            end
+        end
+
+        function sparseRoundTrip(tc)
+            % v7.3 stores sparse as a group of data/ir/jc in compressed-column
+            % form, with the row count in the MATLAB_sparse attribute. The
+            % awkward cases are the degenerate shapes and the all-zero
+            % matrices, which omit data and ir entirely.
+            data.plain = sparse([1 3 5 5], [2 2 1 4], [10 20 30 40], 6, 5);
+            data.big = sprand(500, 400, 0.01);
+            data.allZero = sparse(4, 3);          % no data/ir datasets at all
+            data.zeroSquare = sparse(0, 0);
+            data.zeroRows = sparse(0, 3);
+            data.oneCol = sparse(2, 1, 5, 4, 1);
+            data.scalar = sparse(5);
+            data.lg = sparse(logical([1 0 1; 0 1 0]));
+            data.lgZero = sparse(false(3, 3));
+            data.cplx = sparse([1 2], [1 2], [1 + 2i, 3 - 4i], 3, 3);
+            data.inStruct.m = sparse([1 2], [1 2], [1 1], 2, 2);
+            data.inCell = {sparse(1, 1, 9, 2, 2), 'x'};
+            matPath = char(fullfile(tc.work, 'sp.mat'));
+            save(matPath, '-struct', 'data', '-v7.3');
+            ncPath = char(fullfile(tc.work, 'spnc.mat'));
+            save(ncPath, '-struct', 'data', '-v7.3', '-nocompression');
+
+            fn = fieldnames(data);
+            for p = string({matPath, ncPath})
+                f = matzarr.open(matzarr.index(p));
+                for i = 1:numel(fn)
+                    got = f.getVariable(fn{i});
+                    tc.verifyTrue(isequaln(got, data.(fn{i})), ...
+                        sprintf('%s mismatch (%s)', fn{i}, p));
+                end
+                % class and sparseness are part of the contract, and
+                % isequaln alone does not check either
+                tc.verifyTrue(issparse(f.getVariable('plain')));
+                tc.verifyTrue(issparse(f.getVariable('allZero')));
+                tc.verifyClass(f.getVariable('lg'), 'logical');
+                tc.verifyTrue(issparse(f.getVariable('lg')));
+                tc.verifyFalse(isreal(f.getVariable('cplx')));
+                nested = f.getVariable('inStruct');
+                tc.verifyTrue(issparse(nested.m));
+                inCell = f.getVariable('inCell');
+                tc.verifyTrue(issparse(inCell{1}));
             end
         end
 

@@ -108,7 +108,7 @@ materializes these JSON forms inline in the manifest.
 | cell | reference array into `/#refs#` | resolve refs (hdmf layer), recurse |
 | struct (scalar & arrays) | group with field datasets / MATLAB_fields | build struct, recurse |
 | string | refs-based (v7.3 encoding) | decode; verify exact layout in M0 |
-| sparse | MATLAB_sparse: data/ir/jc | P2 (reconstruct sparse) |
+| sparse | MATLAB_sparse: data/ir/jc | reconstruct from compressed-column form; row count comes from the attribute, all-zero matrices omit data/ir |
 | function_handle, classdef objects | opaque | clear error naming the variable |
 
 Empty arrays (`MATLAB_empty`), scalars, N-D — handled in M2 test matrix.
@@ -158,10 +158,10 @@ r = f.deref(ref);                            % ZarrReference -> node
 |---|---|---|
 | **M0** | **De-risking spike** | ✅ **GO** (spike/m0_spike.m, 2026-07-03). Findings baked into the design below. |
 | **M1** | zarr-matlab v0.3 | ✅ done: `ManifestStore` (byte-range + inline, sharded partial reads compose), `numcodecs.zlib`/`numcodecs.shuffle` (interop-verified vs zarr-python both directions) |
-| **M2** | matzarr alpha | ✅ done (2026-07-03): 19-type round-trip matrix green (incl. complex, nested cells, struct arrays); lazy slicing; reads over HTTP. Deferred to M2.5: request-count assertions, VirtualiZarr shim |
+| **M2** | matzarr alpha | ✅ done (2026-07-03): 21-type round-trip matrix green (incl. complex, sparse, nested cells, struct arrays); lazy slicing; reads over HTTP. Deferred to M2.5: request-count assertions, VirtualiZarr shim |
 | **M3** | hdmf-zarr-matlab read (NWB) | opens PR-#325-written NWB-Zarr; resolves all links/refs; walks a real ecephys file |
 | **M4** | hdmf-zarr-matlab write | MATLAB-written NWB-Zarr passes pynwb validation round trip |
-| **M5** | Polish & release | sparse (P2 call), error surface for exotic types, docs sites, `.mltbx` releases, File Exchange |
+| **M5** | Polish & release | error surface for exotic types, docs sites, `.mltbx` releases, File Exchange |
 | **M6** | MatNWB design doc | I/O abstraction proposal for MatNWB maintainers (coordination, not code) |
 
 Order note: M1+M2 (the .mat goal) come before M3+M4 because they're
