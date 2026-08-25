@@ -318,26 +318,66 @@ switch dt.Class
         dtype = "string";
         isRef = true;
     case 'H5T_COMPOUND'
-        error("matzarr:UnsupportedType", ...
-            "'%s' is compound (complex or table data) — not yet supported.", nodePath);
+        [dtype, elemSize] = mapComplexCompound(dt, nodePath);
     otherwise
         error("matzarr:UnsupportedType", "'%s': HDF5 class %s", nodePath, dt.Class);
 end
 end
 
-function v = zeroFill(dtype)
-info = zarr.internal.dtype_info(dtype);
-if dtype == "string"
-    v = "";
-elseif info.zarrType == "bool"
-    v = false;
-else
-    v = cast(0, char(info.matlabClass));
+function [dtype, elemSize] = mapComplexCompound(dt, nodePath)
+% MATLAB stores a complex array as a two-member compound {real, imag} of one
+% float type, tightly packed and little-endian, which is byte-for-byte the
+% Zarr complex64/complex128 layout. So complex datasets need no re-encoding:
+% they are ordinary byte-range views like any other numeric array. Anything
+% else compound (tables, arbitrary records) is rejected by name here.
+elemSize = double(dt.Size);
+members = struct('Name', {}, 'Datatype', {});
+if isstruct(dt.Type) && isfield(dt.Type, 'Member')
+    members = dt.Type.Member;
+end
+names = reshape(string({members.Name}), 1, []);
+if numel(members) ~= 2 || ~isequal(names, ["real", "imag"])
+    error("matzarr:UnsupportedType", ...
+        "'%s' is a compound type with members [%s]; matzarr supports " + ...
+        "compound data only in MATLAB's complex form (real, imag).", ...
+        nodePath, strjoin(names, ", "));
+end
+parts = [members.Datatype];
+partSize = double(parts(1).Size);
+if ~all(string({parts.Class}) == "H5T_FLOAT") || double(parts(2).Size) ~= partSize
+    error("matzarr:UnsupportedType", ...
+        "'%s': complex parts are not a matching pair of floats.", nodePath);
+end
+if ~all(endsWith(string({parts.Type}), "LE"))
+    error("matzarr:UnsupportedType", "'%s': big-endian complex data", nodePath);
+end
+% Two members whose sizes exactly fill the record leave no room for padding
+% or reordering: real sits at offset 0 and imag directly after it.
+if elemSize ~= 2 * partSize
+    error("matzarr:UnsupportedType", ...
+        "'%s': complex record is %d bytes for %d-byte parts (padded or " + ...
+        "reordered compound).", nodePath, elemSize, partSize);
+end
+switch partSize
+    case 4, dtype = "complex64";
+    case 8, dtype = "complex128";
+    otherwise
+        error("matzarr:UnsupportedType", ...
+            "'%s': complex of float%d", nodePath, partSize * 8);
 end
 end
 
+function v = zeroFill(dtype)
+v = zarr.internal.default_scalar_fill_value(zarr.internal.dtype_info(dtype));
+end
+
 function A = castForPipeline(vals, info, shape)
-A = cast(vals, char(info.matlabClass));
+cls = char(info.matlabClass);
+if info.isComplex
+    A = complex(cast(vals.real, cls), cast(vals.imag, cls));  % h5read: struct of parts
+else
+    A = cast(vals, cls);
+end
 A = reshape(A, zarr.internal.mshape(shape));
 end
 
@@ -349,6 +389,9 @@ if bitand(mask, 1) == 0 && ~isempty(deflateLevel)
 end
 % (shuffle skipped-chunk handling would go here; deflate-only in practice)
 v = typecast(uint8(bytes(:)'), char(info.matlabClass));
+if info.isComplex
+    v = complex(v(1:2:end), v(2:2:end));
+end
 chunkArr = reshape(v, zarr.internal.mshape(flip(h5chunk)));
 end
 

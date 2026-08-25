@@ -55,4 +55,17 @@ if __name__ == "__main__":
     labels = g["labels"]
     assert labels.attrs["zarr_dtype"] == "object"
     assert json.loads(str(labels[0, 0]))["path"].startswith("/#refs#/")
-    print(f"shim: zarr-python read the .mat index OK (big {r}x{c}, refs translated)")
+    # MATLAB's complex compound {real, imag} is indexed as complex128; numpy
+    # reading it back byte-identically is the cross-language proof.
+    cplx = g["cplx"]
+    assert cplx.dtype == np.dtype("complex128"), cplx.dtype
+    n = cplx.shape[0] * cplx.shape[1]
+    expected = (
+        np.arange(1, n + 1, dtype="float64") * 0.5
+        - 0.25j * np.arange(1, n + 1, dtype="float64")
+    ).reshape(cplx.shape[::-1]).T
+    np.testing.assert_array_equal(cplx[...], expected)
+    print(
+        f"shim: zarr-python read the .mat index OK "
+        f"(big {r}x{c}, complex128 {cplx.shape[0]}x{cplx.shape[1]}, refs translated)"
+    )
